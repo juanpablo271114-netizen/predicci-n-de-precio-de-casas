@@ -1,11 +1,16 @@
-import streamlit as st
-import pandas as pd
-import joblib
+import os
+import sys
+import subprocess
+import tempfile
 from pathlib import Path
 
-# =========================
+import pandas as pd
+import streamlit as st
+
+
+# =====================================================
 # CONFIGURACIÓN GENERAL
-# =========================
+# =====================================================
 
 st.set_page_config(
     page_title="Predicción Precio de Vivienda",
@@ -14,9 +19,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# =========================
-# ESTILOS CSS
-# =========================
+
+# =====================================================
+# ESTILOS VISUALES
+# =====================================================
 
 st.markdown("""
 <style>
@@ -31,60 +37,36 @@ st.markdown("""
 
     .hero-card {
         background: linear-gradient(135deg, #111827 0%, #1f2937 50%, #374151 100%);
-        padding: 35px;
+        padding: 36px;
         border-radius: 28px;
-        box-shadow: 0 20px 45px rgba(0,0,0,0.18);
+        box-shadow: 0 18px 45px rgba(0,0,0,0.20);
         color: white;
         margin-bottom: 25px;
     }
 
     .hero-title {
         font-size: 42px;
-        font-weight: 800;
-        margin-bottom: 5px;
+        font-weight: 900;
+        margin-bottom: 8px;
     }
 
     .hero-subtitle {
         font-size: 18px;
         color: #d1d5db;
-        margin-top: 0px;
-    }
-
-    .metric-card {
-        background: white;
-        padding: 25px;
-        border-radius: 24px;
-        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-        border: 1px solid #e5e7eb;
-        text-align: center;
-    }
-
-    .metric-title {
-        font-size: 14px;
-        color: #6b7280;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-
-    .metric-value {
-        font-size: 34px;
-        font-weight: 800;
-        color: #111827;
-        margin-top: 8px;
     }
 
     .section-card {
         background: white;
-        padding: 28px;
+        padding: 26px;
         border-radius: 24px;
-        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
         border: 1px solid #e5e7eb;
         margin-bottom: 20px;
     }
 
     .section-title {
         font-size: 24px;
-        font-weight: 800;
+        font-weight: 850;
         color: #111827;
         margin-bottom: 5px;
     }
@@ -92,16 +74,16 @@ st.markdown("""
     .section-caption {
         color: #6b7280;
         font-size: 15px;
-        margin-bottom: 18px;
     }
 
     .prediction-box {
-        background: linear-gradient(135deg, #064e3b 0%, #047857 60%, #10b981 100%);
-        padding: 32px;
+        background: linear-gradient(135deg, #064e3b 0%, #047857 65%, #10b981 100%);
+        padding: 34px;
         border-radius: 28px;
         color: white;
-        box-shadow: 0 18px 45px rgba(4, 120, 87, 0.28);
+        box-shadow: 0 18px 45px rgba(4, 120, 87, 0.30);
         text-align: center;
+        margin-top: 20px;
     }
 
     .prediction-title {
@@ -112,18 +94,32 @@ st.markdown("""
     }
 
     .prediction-value {
-        font-size: 46px;
-        font-weight: 900;
+        font-size: 48px;
+        font-weight: 950;
         margin-top: 8px;
     }
 
-    .warning-box {
-        background: #fff7ed;
-        color: #9a3412;
-        padding: 18px;
-        border-radius: 18px;
-        border: 1px solid #fed7aa;
-        font-size: 15px;
+    .metric-card {
+        background: white;
+        padding: 22px;
+        border-radius: 22px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+        border: 1px solid #e5e7eb;
+        text-align: center;
+    }
+
+    .metric-title {
+        color: #6b7280;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: .7px;
+    }
+
+    .metric-value {
+        color: #111827;
+        font-size: 30px;
+        font-weight: 900;
+        margin-top: 6px;
     }
 
     div.stButton > button {
@@ -134,84 +130,211 @@ st.markdown("""
         padding: 0.9rem 1rem;
         border-radius: 16px;
         font-size: 18px;
-        font-weight: 700;
-        box-shadow: 0 10px 25px rgba(17, 24, 39, 0.18);
+        font-weight: 800;
+        box-shadow: 0 10px 25px rgba(17, 24, 39, 0.20);
     }
 
     div.stButton > button:hover {
         background: linear-gradient(135deg, #000000 0%, #1f2937 100%);
         color: white;
-        transform: translateY(-1px);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# CARGA DEL MODELO
-# =========================
 
-@st.cache_resource
-def cargar_modelo():
+# =====================================================
+# FUNCIONES DE CONFIGURACIÓN
+# =====================================================
+
+def get_secret(key: str, default: str = "") -> str:
     """
-    Ajusta el nombre del archivo según tu modelo entrenado.
-    El modelo puede ser RandomForest, XGBoost, LinearRegression, Pipeline, etc.
+    Busca primero en Streamlit Secrets y luego en variables de entorno.
+    Esto permite ejecutar la app tanto localmente como en Streamlit Cloud.
     """
-    ruta_modelo = Path("modelo_precio_casas.pkl")
-
-    if ruta_modelo.exists():
-        return joblib.load(ruta_modelo)
-
-    return None
+    try:
+        return st.secrets.get(key, os.getenv(key, default))
+    except Exception:
+        return os.getenv(key, default)
 
 
-modelo = cargar_modelo()
+DATAROBOT_API_KEY = get_secret("DATAROBOT_API_KEY")
+DATAROBOT_DEPLOYMENT_ID = get_secret("DATAROBOT_DEPLOYMENT_ID")
+DATAROBOT_HOST = get_secret("DATAROBOT_HOST", "https://app.datarobot.com")
 
-# =========================
+
+COLUMNAS_MODELO = [
+    "total_habitaciones",
+    "total_dormitorios",
+    "poblacion",
+    "hogares",
+    "ingreso_mediano",
+    "longitud",
+    "latitud",
+    "edad_mediana_vivienda",
+    "proximidad_oceano"
+]
+
+
+def encontrar_columna_prediccion(df_resultado: pd.DataFrame, columnas_entrada: list) -> str:
+    """
+    Intenta identificar automáticamente la columna de predicción devuelta por DataRobot.
+    """
+    columnas_entrada = set(columnas_entrada)
+
+    candidatas = [
+        col for col in df_resultado.columns
+        if col not in columnas_entrada
+        and col.lower() not in ["prediction_status", "row_id"]
+    ]
+
+    candidatas_prioritarias = [
+        col for col in candidatas
+        if "prediction" in col.lower()
+        or "pred" in col.lower()
+        or "precio" in col.lower()
+        or "valor" in col.lower()
+    ]
+
+    if candidatas_prioritarias:
+        return candidatas_prioritarias[0]
+
+    numericas = []
+    for col in candidatas:
+        serie = pd.to_numeric(df_resultado[col], errors="coerce")
+        if serie.notna().any():
+            numericas.append(col)
+
+    if numericas:
+        return numericas[0]
+
+    if candidatas:
+        return candidatas[0]
+
+    return ""
+
+
+def predecir_con_datarobot(df_entrada: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ejecuta predict.py usando un CSV temporal de entrada y genera un CSV temporal de salida.
+    """
+
+    ruta_predict = Path(__file__).parent / "predict.py"
+
+    if not ruta_predict.exists():
+        raise FileNotFoundError(
+            "No se encontró predict.py en el repositorio. "
+            "Debe estar en la misma carpeta que app.py."
+        )
+
+    if not DATAROBOT_API_KEY:
+        raise ValueError(
+            "Falta DATAROBOT_API_KEY. Configúralo en los Secrets de Streamlit Cloud."
+        )
+
+    if not DATAROBOT_DEPLOYMENT_ID:
+        raise ValueError(
+            "Falta DATAROBOT_DEPLOYMENT_ID. Configúralo en los Secrets de Streamlit Cloud."
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_csv = Path(tmpdir) / "input.csv"
+        output_csv = Path(tmpdir) / "output.csv"
+
+        df_entrada.to_csv(input_csv, index=False)
+
+        comando = [
+            sys.executable,
+            str(ruta_predict),
+            str(input_csv),
+            str(output_csv),
+            DATAROBOT_DEPLOYMENT_ID,
+            "--api_key",
+            DATAROBOT_API_KEY,
+            "--host",
+            DATAROBOT_HOST,
+            "--passthrough_columns_set",
+            "--include_prediction_status",
+            "--timeout",
+            "600"
+        ]
+
+        resultado = subprocess.run(
+            comando,
+            capture_output=True,
+            text=True,
+            timeout=900
+        )
+
+        if resultado.returncode != 0:
+            raise RuntimeError(
+                "DataRobot no pudo generar la predicción.\n\n"
+                f"STDOUT:\n{resultado.stdout}\n\n"
+                f"STDERR:\n{resultado.stderr}"
+            )
+
+        if not output_csv.exists():
+            raise FileNotFoundError(
+                "No se generó el archivo de salida de DataRobot."
+            )
+
+        return pd.read_csv(output_csv)
+
+
+# =====================================================
 # ENCABEZADO
-# =========================
+# =====================================================
 
 st.markdown("""
 <div class="hero-card">
     <div class="hero-title">🏠 Predicción Inteligente del Precio de Vivienda</div>
     <div class="hero-subtitle">
-        Interfaz de captura de variables para estimar el valor de una casa usando un modelo predictivo de IA.
+        Interfaz conectada con DataRobot para estimar el precio de una casa a partir de variables habitacionales, geográficas y socioeconómicas.
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# =========================
+
+# =====================================================
 # SIDEBAR
-# =========================
+# =====================================================
 
 with st.sidebar:
-    st.markdown("## ⚙️ Panel del modelo")
+    st.markdown("## ⚙️ Configuración DataRobot")
 
-    if modelo is not None:
-        st.success("Modelo cargado correctamente")
+    if DATAROBOT_API_KEY:
+        st.success("API Key configurada")
     else:
-        st.warning("No se encontró el archivo modelo_precio_casas.pkl")
+        st.error("Falta API Key")
+
+    if DATAROBOT_DEPLOYMENT_ID:
+        st.success("Deployment ID configurado")
+        st.caption(f"Deployment: `{DATAROBOT_DEPLOYMENT_ID[:8]}...`")
+    else:
+        st.error("Falta Deployment ID")
 
     st.markdown("---")
-    st.markdown("""
-    **Variable objetivo:**  
-    Precio estimado de la vivienda.
+    st.markdown("### Variable objetivo")
+    st.info("Precio de la vivienda")
 
-    **Nota técnica:**  
-    `valor_mediano_vivienda` no debe usarse como entrada si representa el precio real de la casa.
-    """)
+    st.markdown("### Nota técnica")
+    st.caption(
+        "La variable `valor_mediano_vivienda` no se captura como entrada, "
+        "porque corresponde a la variable objetivo que el modelo debe predecir."
+    )
 
-# =========================
-# FORMULARIO PRINCIPAL
-# =========================
+
+# =====================================================
+# FORMULARIO
+# =====================================================
 
 col1, col2 = st.columns([1.1, 0.9])
 
 with col1:
     st.markdown("""
     <div class="section-card">
-        <div class="section-title">Captura de características de la vivienda</div>
+        <div class="section-title">Captura de variables</div>
         <div class="section-caption">
-            Ingresa los valores que describen la zona, composición habitacional y características socioeconómicas.
+            Ingresa las características de la vivienda y su entorno. Estos datos serán enviados al modelo desplegado en DataRobot.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -275,7 +398,7 @@ with col1:
             ingreso_mediano = st.number_input(
                 "Ingreso mediano",
                 min_value=0.0,
-                max_value=20.0,
+                max_value=30.0,
                 value=3.5,
                 step=0.1,
                 format="%.2f"
@@ -309,19 +432,20 @@ with col1:
             proximidad_oceano = st.selectbox(
                 "Proximidad al océano",
                 [
-                    "NEAR BAY",
                     "<1H OCEAN",
                     "INLAND",
-                    "NEAR OCEAN",
-                    "ISLAND"
+                    "ISLAND",
+                    "NEAR BAY",
+                    "NEAR OCEAN"
                 ]
             )
 
-        calcular = st.form_submit_button("Calcular precio estimado")
+        calcular = st.form_submit_button("Enviar a DataRobot y predecir")
 
-# =========================
-# DATOS CAPTURADOS
-# =========================
+
+# =====================================================
+# DATAFRAME DE ENTRADA
+# =====================================================
 
 datos_usuario = pd.DataFrame([{
     "total_habitaciones": total_habitaciones,
@@ -335,16 +459,19 @@ datos_usuario = pd.DataFrame([{
     "proximidad_oceano": proximidad_oceano
 }])
 
-# =========================
+datos_usuario = datos_usuario[COLUMNAS_MODELO]
+
+
+# =====================================================
 # PANEL DERECHO
-# =========================
+# =====================================================
 
 with col2:
     st.markdown("""
     <div class="section-card">
-        <div class="section-title">Resumen de variables</div>
+        <div class="section-title">Registro a enviar</div>
         <div class="section-caption">
-            Vista preliminar del registro que será enviado al modelo predictivo.
+            Vista preliminar del registro que será enviado al deployment de DataRobot.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -381,58 +508,64 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
 
-# =========================
+
+# =====================================================
 # PREDICCIÓN
-# =========================
+# =====================================================
 
 st.markdown("---")
 
 if calcular:
+    try:
+        with st.spinner("Enviando datos a DataRobot y generando predicción..."):
+            resultado_datarobot = predecir_con_datarobot(datos_usuario)
 
-    if modelo is None:
-        st.markdown("""
-        <div class="warning-box">
-            No se encontró un modelo entrenado en la carpeta del proyecto. 
-            Guarda tu modelo con el nombre <b>modelo_precio_casas.pkl</b> para activar la predicción.
-        </div>
-        """, unsafe_allow_html=True)
+        columna_prediccion = encontrar_columna_prediccion(
+            resultado_datarobot,
+            COLUMNAS_MODELO
+        )
 
-        st.markdown("### Registro capturado")
-        st.dataframe(datos_usuario, use_container_width=True)
+        st.success("Predicción generada correctamente")
 
-    else:
-        try:
-            prediccion = modelo.predict(datos_usuario)[0]
+        if columna_prediccion:
+            valor_predicho = resultado_datarobot.loc[0, columna_prediccion]
 
-            st.markdown(f"""
-            <div class="prediction-box">
-                <div class="prediction-title">Precio estimado de la vivienda</div>
-                <div class="prediction-value">${prediccion:,.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            try:
+                valor_predicho_num = float(valor_predicho)
 
-        except Exception as e:
-            st.error("Ocurrió un error al realizar la predicción.")
-            st.code(str(e))
+                st.markdown(f"""
+                <div class="prediction-box">
+                    <div class="prediction-title">Precio estimado de la vivienda</div>
+                    <div class="prediction-value">${valor_predicho_num:,.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-            st.markdown("""
-            Posibles causas:
-            - El modelo fue entrenado con nombres de columnas diferentes.
-            - La variable categórica `proximidad_oceano` necesita codificación.
-            - El modelo no fue guardado como Pipeline.
-            """)
+            except Exception:
+                st.markdown(f"""
+                <div class="prediction-box">
+                    <div class="prediction-title">Predicción del modelo</div>
+                    <div class="prediction-value">{valor_predicho}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-# =========================
-# RECOMENDACIÓN FINAL
-# =========================
+        else:
+            st.warning(
+                "La predicción se generó, pero no pude identificar automáticamente "
+                "la columna exacta del resultado."
+            )
 
-st.markdown("""
-<br>
-<div class="section-card">
-    <div class="section-title">Recomendación técnica</div>
-    <div class="section-caption">
-        Para evitar errores al predecir, lo ideal es guardar el modelo como un Pipeline que incluya:
-        imputación de datos, escalamiento numérico, codificación de variables categóricas y el algoritmo predictivo.
-    </div>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown("### Resultado completo devuelto por DataRobot")
+        st.dataframe(resultado_datarobot, use_container_width=True)
+
+        csv_resultado = resultado_datarobot.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            label="Descargar resultado CSV",
+            data=csv_resultado,
+            file_name="prediccion_datarobot.csv",
+            mime="text/csv"
+        )
+
+    except Exception as e:
+        st.error("Ocurrió un error al ejecutar la predicción con DataRobot.")
+        st.code(str(e))
